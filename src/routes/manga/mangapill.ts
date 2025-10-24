@@ -1,94 +1,59 @@
-import axios from "axios";
-import * as cheerio from "cheerio";
+import { FastifyRequest, FastifyReply, FastifyInstance, RegisterOptions } from 'fastify';
+import { MANGA } from '@consumet/extensions';
+const routes = async (fastify: FastifyInstance, options: RegisterOptions) => {
+  const mangapill = new MANGA.MangaPill();
 
-export class MangaPill {
-  baseUrl = "https://mangapill.com";
+  fastify.get('/', (_, rp) => {
+    rp.status(200).send({
+      intro: `Welcome to the Mangapill provider: check out the provider's website @ ${mangapill.toString.baseUrl}`,
+      routes: ['/:query', '/info', '/read'],
+      documentation: 'https://docs.consumet.org/#tag/mangapill',
+    });
+  });
 
-  async search(query: string) {
+  fastify.get('/:query', async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = (request.params as { query: string }).query;
+
+    const res = await mangapill.search(query);
+
+    reply.status(200).send(res);
+  });
+
+  fastify.get('/info', async (request: FastifyRequest, reply: FastifyReply) => {
+    const id = (request.query as { id: string }).id;
+
+    if (typeof id === 'undefined')
+      return reply.status(400).send({ message: 'id is required' });
+
     try {
-      const url = `${this.baseUrl}/search?q=${encodeURIComponent(query)}`;
-      const { data } = await axios.get(url);
-      const $ = cheerio.load(data);
+      const res = await mangapill.fetchMangaInfo(id);
 
-      const results: any[] = [];
-      $("a[href^='/manga/']").each((_, el) => {
-        const title = $(el).find("p").text().trim();
-        const href = $(el).attr("href");
-        const image = $(el).find("img").attr("src");
-
-        if (title && href && image) {
-          results.push({
-            id: href,
-            title,
-            image,
-            url: this.baseUrl + href,
-          });
-        }
-      });
-
-      return results;
-    } catch (error) {
-      console.error("MangaPill search error:", error);
-      return [];
+      reply.status(200).send(res);
+    } catch (err) {
+      reply
+        .status(500)
+        .send({ message: 'Something went wrong. Please try again later.' });
     }
-  }
+  });
 
-  async fetchMangaInfo(id: string) {
+  fastify.get('/read', async (request: FastifyRequest, reply: FastifyReply) => {
+    const chapterId = (request.query as { chapterId: string }).chapterId;
+
+    if (typeof chapterId === 'undefined')
+      return reply.status(400).send({ message: 'chapterId is required' });
+
     try {
-      const url = `${this.baseUrl}${id}`;
-      const { data } = await axios.get(url);
-      const $ = cheerio.load(data);
+      const res = await mangapill
+        .fetchChapterPages(chapterId)
+        .catch((err: Error) => reply.status(404).send({ message: err.message }));
 
-      const title = $("h1").first().text().trim();
-      const image = $("img").first().attr("src");
-      const description = $("p.text-base").first().text().trim();
-
-      const chapters: any[] = [];
-      $("a.border.border-border").toArray().reverse().forEach((el) => {
-        const chapterTitle = $(el).text().trim();
-        const chapterId = $(el).attr("href");
-        if (chapterId)
-          chapters.push({
-            id: chapterId,
-            title: chapterTitle,
-            url: this.baseUrl + chapterId,
-          });
-      });
-
-      return {
-        title,
-        image,
-        description,
-        chapters,
-        url,
-      };
-    } catch (error) {
-      console.error("MangaPill manga info error:", error);
-      return null;
+      reply.status(200).send(res);
+    } catch (err) {
+      reply
+        .status(500)
+        .send({ message: 'Something went wrong. Please try again later.' });
     }
-  }
+  });
+};
 
-  async fetchChapterPages(chapterId: string) {
-    try {
-      const url = `${this.baseUrl}${chapterId}`;
-      const { data } = await axios.get(url);
-      const $ = cheerio.load(data);
-
-      const pages: string[] = [];
-      $("img.js-page").each((_, el) => {
-        const src = $(el).attr("data-src") || $(el).attr("src") || "";
-        if (src) pages.push(src);
-      });
-
-      return {
-        chapterId,
-        pages,
-      };
-    } catch (error) {
-      console.error("MangaPill chapter fetch error:", error);
-      return { chapterId, pages: [] };
-    }
-  }
-}
-
-export default new MangaPill();
+export default routes;
