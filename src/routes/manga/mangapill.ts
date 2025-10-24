@@ -1,59 +1,78 @@
-import { FastifyRequest, FastifyReply, FastifyInstance, RegisterOptions } from 'fastify';
-import { MANGA } from '@consumet/extensions';
-const routes = async (fastify: FastifyInstance, options: RegisterOptions) => {
-  const mangapill = new MANGA.MangaPill();
+import axios from "axios";
+import * as cheerio from "cheerio";
 
-  fastify.get('/', (_, rp) => {
-    rp.status(200).send({
-      intro: `Welcome to the Mangapill provider: check out the provider's website @ ${mangapill.toString.baseUrl}`,
-      routes: ['/:query', '/info', '/read'],
-      documentation: 'https://docs.consumet.org/#tag/mangapill',
+export class MangaPill {
+  baseUrl = "https://mangapill.com";
+
+  async search(query: string) {
+    const url = `${this.baseUrl}/search?q=${encodeURIComponent(query)}`;
+    const { data } = await axios.get(url);
+    const $ = cheerio.load(data);
+
+    const results: any[] = [];
+    $("a").each((_, el) => {
+      const title = $(el).find("p").text().trim();
+      const href = $(el).attr("href");
+      const image = $(el).find("img").attr("src");
+
+      if (title && href && image) {
+        results.push({
+          id: href,
+          title,
+          image,
+          url: this.baseUrl + href,
+        });
+      }
     });
-  });
 
-  fastify.get('/:query', async (request: FastifyRequest, reply: FastifyReply) => {
-    const query = (request.params as { query: string }).query;
+    return results;
+  }
 
-    const res = await mangapill.search(query);
+  async fetchMangaInfo(id: string) {
+    const url = `${this.baseUrl}${id}`;
+    const { data } = await axios.get(url);
+    const $ = cheerio.load(data);
 
-    reply.status(200).send(res);
-  });
+    const title = $("h1").first().text().trim();
+    const image = $("img").first().attr("src");
+    const description = $("p.text-base").first().text().trim();
 
-  fastify.get('/info', async (request: FastifyRequest, reply: FastifyReply) => {
-    const id = (request.query as { id: string }).id;
+    const chapters: any[] = [];
+    $("a.border.border-border").each((_, el) => {
+      const chapterTitle = $(el).text().trim();
+      const chapterId = $(el).attr("href");
+      if (chapterId)
+        chapters.push({
+          id: chapterId,
+          title: chapterTitle,
+          url: this.baseUrl + chapterId,
+        });
+    });
 
-    if (typeof id === 'undefined')
-      return reply.status(400).send({ message: 'id is required' });
+    return {
+      title,
+      image,
+      description,
+      chapters,
+      url,
+    };
+  }
 
-    try {
-      const res = await mangapill.fetchMangaInfo(id);
+  async fetchChapterPages(chapterId: string) {
+    const url = `${this.baseUrl}${chapterId}`;
+    const { data } = await axios.get(url);
+    const $ = cheerio.load(data);
 
-      reply.status(200).send(res);
-    } catch (err) {
-      reply
-        .status(500)
-        .send({ message: 'Something went wrong. Please try again later.' });
-    }
-  });
+    const pages: string[] = [];
+    $("img.js-page").each((_, el) => {
+      const src =
+        $(el).attr("data-src") || $(el).attr("src") || "";
+      if (src) pages.push(src);
+    });
 
-  fastify.get('/read', async (request: FastifyRequest, reply: FastifyReply) => {
-    const chapterId = (request.query as { chapterId: string }).chapterId;
-
-    if (typeof chapterId === 'undefined')
-      return reply.status(400).send({ message: 'chapterId is required' });
-
-    try {
-      const res = await mangapill
-        .fetchChapterPages(chapterId)
-        .catch((err: Error) => reply.status(404).send({ message: err.message }));
-
-      reply.status(200).send(res);
-    } catch (err) {
-      reply
-        .status(500)
-        .send({ message: 'Something went wrong. Please try again later.' });
-    }
-  });
-};
-
-export default routes;
+    return {
+      chapterId,
+      pages,
+    };
+  }
+}
